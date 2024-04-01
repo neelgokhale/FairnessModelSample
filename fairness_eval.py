@@ -79,8 +79,7 @@ def group_bias_score(df: pd.DataFrame,
     - Fairness score as a float.
     """
     
-    
-    metrics = ['FPR', 'FNR', 'ACC']    
+    #initialize empty dataframe
     df = pd.DataFrame(columns=['Protected Group','Category','FPR', 'FNR', 'ACC'])
 
     # group by protected features
@@ -95,16 +94,13 @@ def group_bias_score(df: pd.DataFrame,
             #add group acc to tracker
             acc = get_acc_rate(cm)
             
+            #add rows to empty dataframe
             df.loc[len(df)] = [prot_group, name, fpr, fnr, acc]
     
-    df[['FPR_REF','FNR_REF','ACC_REF', 'FPR_DIFF','FNR_DIFF','ACC_DIFF']] = 1
+    df[['FPR_REF','FNR_REF','ACC_REF', 'FPR_DIFF','FNR_DIFF','ACC_DIFF']] = np.NaN
     for category in df.groupby(by=['Protected Group', 'Category']):
         #find fpr ref and set value in df
-        fpr_ref = 1
-        fpr = (min(group[1]['FPR']))
-        if fpr < fpr_ref:
-            fpr_ref = fpr
-        df.loc[df['Category'] == category[0][1], 'FPR_REF'  ] = fpr_ref 
+        df.loc[df['Category'] == category[0][1], 'FPR_REF'  ] = (min(group[1]['FPR']))
         
         #find fnr ref
         fnr_ref = 1
@@ -121,11 +117,11 @@ def group_bias_score(df: pd.DataFrame,
         df.loc[df['Category'] == category[0][1], 'ACC_REF'  ] = acc_ref 
         
         #find the differences between the maximum of each metric and the ref
-        df.loc[df['Category'] == category[0][1], 'FPR_DIFF'  ] = max(df[['Category', 'FPR']]['FPR']) - fpr_ref
+        df.loc[df['Category'] == category[0][1], 'FPR_DIFF'  ] = max(df[['Category', 'FPR']]['FPR']) - min(df[['Category', 'FPR']]['FPR'])
         df.loc[df['Category'] == category[0][1], 'FNR_DIFF'  ] = max(df[['Category', 'FNR']]['FNR']) - fnr_ref
         df.loc[df['Category'] == category[0][1], 'ACC_DIFF'  ] = max(df[['Category', 'ACC']]['ACC']) - acc_ref
     
-    #calculate group bias scores
+    #calculate group bias scores FIX TO FIND SCORE FOR EACH GROUP
     df['Bias'] = np.sqrt((1/3) * (
         df['FPR_DIFF'] ** 2 + df['FNR_DIFF'] ** 2 + df['ACC_DIFF'] ** 2))
             
@@ -156,10 +152,9 @@ def get_theil_binary(y_true: pd.Series | np.ndarray | list) -> float:
     #by the average benefit    
     theil = (theil_sum * (1/len(y_true)) ) / avg_benefit
     
+    #convert theil to bias score
+    
     return theil
-
-
-
 
 
 def fairness_score(df: pd.DataFrame, y_true: pd.Series | np.ndarray | list, qs_score: float,
@@ -193,7 +188,7 @@ def fairness_score(df: pd.DataFrame, y_true: pd.Series | np.ndarray | list, qs_s
     #sum up scores, multiply by 1/(number of scores), then take the square root to find raw fairness score
     raw_fairness = np.sqrt((1/len(scores)) * sum(scores))
     
-    #calculate final fairness score
+    #calculate final fairness score by multiplying raw score with qualitative score given as input
     fairness = qs_score * raw_fairness
     
     return fairness
