@@ -66,10 +66,10 @@ def get_acc_rate(cm: np.ndarray) -> float:
     acc_rate = (tn + tp) / (tn + tp + fn + fp)
     return acc_rate
 
-def calculate_fairness_score(df: pd.DataFrame, 
-                             feature_cols: list[str]=['SEX', 'AGE']) -> dict:
+def group_bias_score(df: pd.DataFrame, 
+                             feature_cols: list[str]=['SEX', 'AGE']) -> pd.DataFrame:
     """
-    Calculate the fairness score based on given dataframe and protected features.
+    Calculate the bias score based on given dataframe and protected features.
 
     Parameters:
     - df: DataFrame containing true and predicted labels along with protected features.
@@ -79,10 +79,9 @@ def calculate_fairness_score(df: pd.DataFrame,
     - Fairness score as a float.
     """
     
-    # setup trackers for each metric
-    fpr_dict = {group:"" for group in feature_cols}
-    fnr_dict = {(group, []) for group in feature_cols}
-    acc_dict = {(group, []) for group in feature_cols}
+    
+    metrics = ['FPR', 'FNR', 'ACC']    
+    df = pd.DataFrame(columns=['Protected Group','Category','FPR', 'FNR', 'ACC'])
 
     # group by protected features
     for prot_group in feature_cols:
@@ -91,26 +90,46 @@ def calculate_fairness_score(df: pd.DataFrame,
             
             #add group fpr to tracker
             fpr = get_fpr_rate(cm)
-            fpr_dict[group] = fpr
             #add group fnr to tracker
             fnr = get_fnr_rate(cm)
-            fnr_dict[group] = fnr
             #add group acc to tracker
             acc = get_acc_rate(cm)
-            acc_dict[group] = acc
-     
-    #setup bias tracker
-    bias_dict =  {group:"" for group in feature_cols}      
-     
-    #calculate bias score
-    for prot_group in feature_cols:
-        bias = (math.sqrt((1/3)*
-                          (fpr_dict[prot_group]**2 + 
-                           fnr_dict[prot_group]**2 +
-                           acc_dict[prot_group]**2)))
-        bias_dict[prot_group] = bias
             
-    return bias_dict
+            df.loc[len(df)] = [prot_group, name, fpr, fnr, acc]
+    
+    df[['FPR_REF','FNR_REF','ACC_REF', 'FPR_DIFF','FNR_DIFF','ACC_DIFF']] = 1
+    for category in df.groupby(by=['Protected Group', 'Category']):
+        #find fpr ref and set value in df
+        fpr_ref = 1
+        fpr = (min(group[1]['FPR']))
+        if fpr < fpr_ref:
+            fpr_ref = fpr
+        df.loc[df['Category'] == category[0][1], 'FPR_REF'  ] = fpr_ref 
+        
+        #find fnr ref
+        fnr_ref = 1
+        fnr = (min(group[1]['FNR']))
+        if fnr < fnr_ref:
+            fnr_ref = fnr
+        df.loc[df['Category'] == category[0][1], 'FNR_REF'  ] = fnr_ref 
+
+        #find acc ref
+        acc_ref = 1
+        acc = (min(group[1]['ACC']))
+        if acc < acc_ref:
+            acc_ref = acc
+        df.loc[df['Category'] == category[0][1], 'ACC_REF'  ] = acc_ref 
+        
+        #find the differences between the maximum of each metric and the ref
+        df.loc[df['Category'] == category[0][1], 'FPR_DIFF'  ] = max(df[['Category', 'FPR']]['FPR']) - fpr_ref
+        df.loc[df['Category'] == category[0][1], 'FNR_DIFF'  ] = max(df[['Category', 'FNR']]['FNR']) - fnr_ref
+        df.loc[df['Category'] == category[0][1], 'ACC_DIFF'  ] = max(df[['Category', 'ACC']]['ACC']) - acc_ref
+    
+    #calculate group bias scores
+    df['Bias'] = np.sqrt((1/3) * (
+        df['FPR_DIFF'] ** 2 + df['FNR_DIFF'] ** 2 + df['ACC_DIFF'] ** 2))
+            
+    return df
 
 def get_theil_binary(y_true: pd.Series | np.ndarray | list) -> float:
     """
@@ -138,4 +157,47 @@ def get_theil_binary(y_true: pd.Series | np.ndarray | list) -> float:
     theil = (theil_sum * (1/len(y_true)) ) / avg_benefit
     
     return theil
+
+
+
+
+
+def fairness_score(df: pd.DataFrame, y_true: pd.Series | np.ndarray | list, qs_score: float,
+                         feature_cols: list[str]=['SEX', 'AGE']) -> float:
+    """
+    Calculate the bias score based on given dataframe and protected features.
+
+    Parameters:
+    - df: DataFrame containing true and predicted labels along with protected features.
+    - feature_cols: List of column names representing protected features. Default is ['SEX', 'AGE'].
+
+    Returns:
+    - Fairness score as a float.
+    """
+    #get individual and group scores
+    theil = get_theil_binary(y_true)
+    group = group_bias_score(df, feature_cols)
+    
+    #extract group bias scores from dataframe
+    scores = []
+    for group in feature_cols:
+        group_bias = df['Protected Group']['Bias'][0]
+        scores.append(group_bias)
+        
+    scores.append(theil)
+    
+    #initialize array with all fairness scores.    
+    scores = np.array(scores)
+    #square each score
+    scores = scores ** 2
+    #sum up scores, multiply by 1/(number of scores), then take the square root to find raw fairness score
+    raw_fairness = np.sqrt((1/len(scores)) * sum(scores))
+    
+    #calculate final fairness score
+    fairness = qs_score * raw_fairness
+    
+    return fairness
+    
+    
+    
         
